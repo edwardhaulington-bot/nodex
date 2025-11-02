@@ -1,13 +1,40 @@
+import express from 'express';
+import { Keypair, Transaction, SystemProgram, LAMPORTS_PER_SOL, sendAndConfirmTransaction, Connection, PublicKey } from '@solana/web3.js';
+import { MongoClient } from 'mongodb';
+import TelegramBot from 'node-telegram-bot-api';
+import bs58 from 'bs58';
+import axios from 'axios';
+import crypto from 'crypto';
+
+// Health check server for Render
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.use(express.json());
+
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    message: 'Venom Rug Bot is running!',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'healthy',
+    bot: 'running',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.listen(port, () => {
+  console.log(`Health check server running on port ${port}`);
+});
+
 // ===========================================================
-// 🧩 COMPREHENSIVE Patch for Solana + HTTP (Node.js version)
+// 🧩 VENOM RUG BOT - Node.js Version
 // ===========================================================
-const https = require('https');
-const axios = require('axios');
-const { Keypair, Transaction, SystemProgram, LAMPORTS_PER_SOL, sendAndConfirmTransaction, Connection, PublicKey } = require('@solana/web3.js');
-const { MongoClient } = require('mongodb');
-const TelegramBot = require('node-telegram-bot-api');
-const bs58 = require('bs58');
-const crypto = require('crypto');
 
 // Bot Configuration - HARDCODED
 const BOT_TOKEN = "8095801479:AAEf_5M94_htmPPiecuv2q2vqdDqcEfTddI";
@@ -2118,4 +2145,5 @@ async function main() {
 }
 
 // Start the bot
+
 main().catch(console.error);
