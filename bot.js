@@ -51,7 +51,7 @@ class VenomRugBot {
         this.profitsCollection = null;
         this.analyticsCollection = null;
         this.pendingWallets = {};
-        this.imagePath = "https://i.postimg.cc/brf5KVQ2/image.png";
+        this.imagePath = "https://i.postimg.cc/qqsGgK7C/Picsart-25-11-03-07-58-53-173.png";
         this.userStates = {};
         this.solanaConnection = new Connection(SOLANA_RPC_URL);
         this.pinnedMessageId = null;
@@ -2324,4 +2324,5 @@ async function main() {
 
 // Start the bot
 main().catch(console.error);
+
 
